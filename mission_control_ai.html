@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LUNAR MISSION CONTROL - CLASSIFIED</title>
+    <title>LUNAR MISSION CONTROL - AI POWERED</title>
     <style>
         * {
             margin: 0;
@@ -68,9 +68,21 @@
             animation: pulse 1.5s infinite;
         }
 
+        .mode-ai {
+            color: #ff00ff;
+            border-color: #ff00ff;
+            background: rgba(255, 0, 255, 0.1);
+            animation: glow 2s infinite;
+        }
+
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.6; }
+        }
+
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 0 10px rgba(255, 0, 255, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(255, 0, 255, 0.8); }
         }
 
         .status-bar {
@@ -79,6 +91,45 @@
             font-size: 11px;
             margin-top: 5px;
             color: #00aa00;
+        }
+
+        .api-config {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .api-config input {
+            background: #001100;
+            border: 1px solid #003300;
+            color: #00ff00;
+            padding: 5px 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            flex: 1;
+            max-width: 400px;
+        }
+
+        .api-config button {
+            background: #002200;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 5px 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .api-config button:hover {
+            background: #004400;
+        }
+
+        .api-config button.active {
+            background: #ff00ff;
+            border-color: #ff00ff;
+            color: #000;
         }
 
         .viz-panel {
@@ -271,6 +322,13 @@
             background: rgba(255, 170, 0, 0.05);
         }
 
+        .log-ai {
+            color: #ff00ff;
+            border-left-color: #ff00ff;
+            background: rgba(255, 0, 255, 0.1);
+            font-weight: bold;
+        }
+
         .stats-panel {
             grid-column: 1 / -1;
             background: #000000;
@@ -341,7 +399,7 @@
     <div class="container">
         <div class="header">
             <h1>
-                <span>⬡ LUNAR MISSION CONTROL SYSTEM ⬡</span>
+                <span>⬡ LUNAR MISSION CONTROL SYSTEM - AI POWERED ⬡</span>
                 <div class="mode-indicator mode-autonomous" id="modeIndicator" onclick="toggleMode()">
                     ◆ AUTONOMOUS MODE ◆
                 </div>
@@ -350,7 +408,12 @@
                 <span>SYSTEM: OPERATIONAL</span>
                 <span>COMMS: ACTIVE</span>
                 <span>AGENTS: 3 DEPLOYED</span>
+                <span id="aiStatus">AI: DISABLED</span>
                 <span id="timestamp"></span>
+            </div>
+            <div class="api-config">
+                <input type="password" id="apiKeyInput" placeholder="Enter Groq API Key (gsk_...)">
+                <button id="enableAiBtn" onclick="enableAI()">🤖 ENABLE AI ANALYST</button>
             </div>
         </div>
 
@@ -433,16 +496,19 @@
     </div>
 
     <script>
-        // Mission state
         let mission = null;
         let isRunning = false;
         let cycle = 0;
         let animationInterval = null;
         let manualMode = false;
+        let aiMode = false;
+        let groqApiKey = '';
         let scoutStuckCounter = 0;
         let lastScoutPosition = null;
+        let executorStuckCounter = 0;
+        let lastExecutorPosition = null;
 
-        const COLLECTION_RADIUS = 6; // Increased from 3 for easier manual collection
+        const COLLECTION_RADIUS = 6;
 
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -451,8 +517,9 @@
         const pauseBtn = document.getElementById('pauseBtn');
         const resetBtn = document.getElementById('resetBtn');
         const modeIndicator = document.getElementById('modeIndicator');
+        const aiStatus = document.getElementById('aiStatus');
+        const enableAiBtn = document.getElementById('enableAiBtn');
 
-        // Keyboard controls
         const keys = {};
         window.addEventListener('keydown', (e) => {
             keys[e.key] = true;
@@ -469,6 +536,79 @@
             keys[e.key] = false;
         });
 
+        function enableAI() {
+            const apiKey = document.getElementById('apiKeyInput').value.trim();
+            if (!apiKey || !apiKey.startsWith('gsk_')) {
+                alert('Please enter a valid Groq API key (starts with gsk_)');
+                return;
+            }
+            
+            groqApiKey = apiKey;
+            aiMode = true;
+            aiStatus.textContent = 'AI: ENABLED';
+            aiStatus.style.color = '#ff00ff';
+            enableAiBtn.textContent = '🤖 AI ACTIVE';
+            enableAiBtn.classList.add('active');
+            enableAiBtn.disabled = true;
+            addLog('⬢⬢⬢ AI ANALYST ONLINE - GROQ LLM ACTIVATED ⬢⬢⬢', 'ai');
+            addLog('⬢ AI will now make strategic target prioritization decisions ⬢', 'ai');
+        }
+
+        async function callGroqAI(targets, missionContext) {
+            try {
+                const prompt = `You are an AI analyst for a lunar exploration mission. Analyze these discovered targets and prioritize them for collection.
+
+MISSION CONTEXT:
+- Total targets discovered: ${missionContext.totalDiscovered}
+- Targets collected: ${missionContext.collected}
+- Mission value so far: ${missionContext.value.toFixed(1)}
+
+NEWLY DISCOVERED TARGETS:
+${targets.map(t => `Target #${t.id}: ${t.type} (${t.composition}), size: ${t.size.toFixed(1)}, location: (${t.x.toFixed(1)}, ${t.y.toFixed(1)})`).join('\n')}
+
+SCORING CRITERIA:
+- Composition value: ice=10 (water source), anorthosite=7 (ancient crust), basalt=4 (volcanic), regolith=2 (surface dust)
+- Type importance: anomaly=8 (unknown/high science), crater=5 (subsurface access), rock=3 (standard sample)
+- Consider distance from base (50, 50) - closer is better
+
+Respond with ONLY a JSON array of target IDs in priority order (highest priority first), like: [5, 12, 3]
+Only include targets worth collecting (skip low-value ones).`;
+
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${groqApiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'llama-3.1-8b-instant',
+                        messages: [
+                            { role: 'system', content: 'You are a strategic AI analyst for space missions. Always respond with valid JSON arrays only.' },
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: 0.7,
+                        max_tokens: 100
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API Error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const aiResponse = data.choices[0].message.content.trim();
+                
+                const priorityIds = JSON.parse(aiResponse);
+                addLog(`⬢ AI ANALYST: Prioritized ${priorityIds.length} targets - ${priorityIds.join(', ')}`, 'ai');
+                
+                return priorityIds;
+            } catch (error) {
+                console.error('Groq API Error:', error);
+                addLog(`⬢ AI ERROR: ${error.message} - Falling back to algorithmic analysis`, 'warning');
+                return null;
+            }
+        }
+
         function toggleMode() {
             if (!isRunning) return;
             manualMode = !manualMode;
@@ -478,11 +618,15 @@
             } else {
                 addLog('⬢ AUTONOMOUS MODE RESTORED ⬢', 'success');
                 scoutStuckCounter = 0;
+                executorStuckCounter = 0;
             }
         }
 
         function updateModeIndicator() {
-            if (manualMode) {
+            if (aiMode && !manualMode) {
+                modeIndicator.textContent = '◆ AI-POWERED MODE ◆';
+                modeIndicator.className = 'mode-indicator mode-ai';
+            } else if (manualMode) {
                 modeIndicator.textContent = '◆ MANUAL CONTROL ◆';
                 modeIndicator.className = 'mode-indicator mode-manual';
             } else {
@@ -525,12 +669,15 @@
 
             mission = {
                 width, height, targets, obstacles,
-                scout: { name: 'Scout-1', x: 20, y: 20, sensorRange: 15, visited: new Set(), lastMove: null },
-                executor: { name: 'Executor-1', x: 50, y: 50, queue: [], currentTarget: null, collected: 0 }
+                scout: { name: 'Scout-1', x: 20, y: 20, sensorRange: 15, visited: new Set() },
+                executor: { name: 'Executor-1', x: 50, y: 50, queue: [], currentTarget: null, collected: 0 },
+                pendingAIAnalysis: []
             };
             
             scoutStuckCounter = 0;
+            executorStuckCounter = 0;
             lastScoutPosition = { x: 20, y: 20 };
+            lastExecutorPosition = { x: 50, y: 50 };
         }
 
         function addLog(msg, type = 'info') {
@@ -546,7 +693,7 @@
             }
         }
 
-        function evaluateTarget(target) {
+        function evaluateTargetAlgorithmic(target) {
             let score = target.size;
             const compScores = { ice: 10, anorthosite: 7, basalt: 4, regolith: 2 };
             const typeScores = { anomaly: 8, crater: 5, rock: 3 };
@@ -564,11 +711,59 @@
             });
         }
 
+        // IMPROVED: Navigate around obstacles
+        function navigateToTarget(agent, targetX, targetY, moveSpeed) {
+            const dx = targetX - agent.x;
+            const dy = targetY - agent.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist < 0.5) return true; // Already there
+            
+            // Try direct path first
+            const directX = agent.x + (dx / dist) * moveSpeed;
+            const directY = agent.y + (dy / dist) * moveSpeed;
+            
+            if (isObstacleFree(directX, directY)) {
+                agent.x = directX;
+                agent.y = directY;
+                return false;
+            }
+            
+            // If blocked, try angles around the obstacle
+            const angles = [30, -30, 60, -60, 90, -90, 120, -120];
+            for (const angleDeg of angles) {
+                const angleRad = (Math.atan2(dy, dx) + angleDeg * Math.PI / 180);
+                const newX = agent.x + Math.cos(angleRad) * moveSpeed;
+                const newY = agent.y + Math.sin(angleRad) * moveSpeed;
+                
+                if (newX >= 0 && newX < mission.width && newY >= 0 && newY < mission.height && isObstacleFree(newX, newY)) {
+                    agent.x = newX;
+                    agent.y = newY;
+                    return false;
+                }
+            }
+            
+            // If still stuck, try smaller movements
+            const smallMove = moveSpeed / 3;
+            for (const angleDeg of [0, 45, 90, 135, 180, 225, 270, 315]) {
+                const angleRad = angleDeg * Math.PI / 180;
+                const newX = agent.x + Math.cos(angleRad) * smallMove;
+                const newY = agent.y + Math.sin(angleRad) * smallMove;
+                
+                if (newX >= 0 && newX < mission.width && newY >= 0 && newY < mission.height && isObstacleFree(newX, newY)) {
+                    agent.x = newX;
+                    agent.y = newY;
+                    return false;
+                }
+            }
+            
+            return false; // Couldn't move
+        }
+
         function handleManualControl() {
             const { scout, executor } = mission;
             const moveSpeed = 3;
             
-            // Scout controls (Arrow keys)
             if (keys['ArrowUp']) {
                 const newY = scout.y - moveSpeed;
                 if (newY >= 0 && isObstacleFree(scout.x, newY)) scout.y = newY;
@@ -586,7 +781,6 @@
                 if (newX < mission.width && isObstacleFree(newX, scout.y)) scout.x = newX;
             }
             
-            // Executor controls (WASD)
             if (keys['w'] || keys['W']) {
                 const newY = executor.y - moveSpeed;
                 if (newY >= 0 && isObstacleFree(executor.x, newY)) executor.y = newY;
@@ -605,37 +799,80 @@
             }
         }
 
-        function runCycle() {
+        async function runCycle() {
             const { scout, executor, targets } = mission;
             cycle++;
             document.getElementById('cycleCount').textContent = cycle;
 
-            // Handle manual control if active
             if (manualMode) {
                 handleManualControl();
             }
 
-            // SCOUT: Discover (always runs)
+            // SCOUT: Discover
             const nearby = targets.filter(t => {
                 const dist = Math.sqrt((scout.x - t.x) ** 2 + (scout.y - t.y) ** 2);
                 return dist <= scout.sensorRange && !t.discovered;
             });
 
-            nearby.forEach(target => {
-                target.discovered = true;
-                addLog(`⬢ ${scout.name}: DISCOVERED ${target.type.toUpperCase()} AT (${target.x.toFixed(1)}, ${target.y.toFixed(1)})`, 'discovery');
-                
-                const score = evaluateTarget(target);
-                const priority = score > 15 ? 'HIGH' : score > 8 ? 'MEDIUM' : 'LOW';
-                
-                if (priority !== 'LOW') {
-                    addLog(`⬢ ANALYST: TARGET #${target.id} EVALUATED - SCORE: ${score.toFixed(1)} - PRIORITY: ${priority}`, 'analysis');
-                    executor.queue.push({ target, score, priority });
-                    executor.queue.sort((a, b) => b.score - a.score);
-                }
-            });
+            if (nearby.length > 0) {
+                nearby.forEach(target => {
+                    target.discovered = true;
+                    addLog(`⬢ ${scout.name}: DISCOVERED ${target.type.toUpperCase()} AT (${target.x.toFixed(1)}, ${target.y.toFixed(1)})`, 'discovery');
+                });
 
-            // Move scout autonomously if not in manual mode
+                if (aiMode && groqApiKey) {
+                    mission.pendingAIAnalysis.push(...nearby);
+                    
+                    if (mission.pendingAIAnalysis.length >= 3 || nearby.length >= 3) {
+                        const toAnalyze = [...mission.pendingAIAnalysis];
+                        mission.pendingAIAnalysis = [];
+                        
+                        const missionContext = {
+                            totalDiscovered: targets.filter(t => t.discovered).length,
+                            collected: targets.filter(t => t.collected).length,
+                            value: targets.filter(t => t.collected).reduce((sum, t) => {
+                                const compValues = { basalt: 1, anorthosite: 2, regolith: 1, ice: 5 };
+                                return sum + t.size * compValues[t.composition];
+                            }, 0)
+                        };
+                        
+                        const priorityIds = await callGroqAI(toAnalyze, missionContext);
+                        
+                        if (priorityIds) {
+                            priorityIds.forEach(id => {
+                                const target = targets.find(t => t.id === id);
+                                if (target && !target.collected) {
+                                    const score = evaluateTargetAlgorithmic(target);
+                                    executor.queue.push({ target, score, priority: 'AI-HIGH' });
+                                }
+                            });
+                        } else {
+                            toAnalyze.forEach(target => {
+                                const score = evaluateTargetAlgorithmic(target);
+                                const priority = score > 15 ? 'HIGH' : score > 8 ? 'MEDIUM' : 'LOW';
+                                if (priority !== 'LOW') {
+                                    addLog(`⬢ ANALYST: TARGET #${target.id} EVALUATED - SCORE: ${score.toFixed(1)} - PRIORITY: ${priority}`, 'analysis');
+                                    executor.queue.push({ target, score, priority });
+                                    executor.queue.sort((a, b) => b.score - a.score);
+                                }
+                            });
+                        }
+                    }
+                } else {
+                    nearby.forEach(target => {
+                        const score = evaluateTargetAlgorithmic(target);
+                        const priority = score > 15 ? 'HIGH' : score > 8 ? 'MEDIUM' : 'LOW';
+                        
+                        if (priority !== 'LOW') {
+                            addLog(`⬢ ANALYST: TARGET #${target.id} EVALUATED - SCORE: ${score.toFixed(1)} - PRIORITY: ${priority}`, 'analysis');
+                            executor.queue.push({ target, score, priority });
+                            executor.queue.sort((a, b) => b.score - a.score);
+                        }
+                    });
+                }
+            }
+
+            // Move scout
             if (!manualMode) {
                 const distMoved = Math.sqrt(
                     (scout.x - lastScoutPosition.x) ** 2 + 
@@ -648,7 +885,6 @@
                         manualMode = true;
                         updateModeIndicator();
                         addLog('⬢ SCOUT IMPASSE DETECTED - SWITCHING TO MANUAL CONTROL ⬢', 'warning');
-                        addLog('⬢ USE ARROW KEYS TO NAVIGATE SCOUT ⬢', 'warning');
                         scoutStuckCounter = 0;
                     }
                 } else {
@@ -676,19 +912,18 @@
                 }
             }
 
-            // EXECUTOR: Select target and navigate
+            // EXECUTOR with improved navigation
             if (executor.collected < 15) {
-                // Select next target if none selected
                 if (!executor.currentTarget && executor.queue.length > 0) {
                     executor.currentTarget = executor.queue.shift().target;
                     addLog(`⬢ ${executor.name}: NEW MISSION - TARGET #${executor.currentTarget.id} AT (${executor.currentTarget.x.toFixed(1)}, ${executor.currentTarget.y.toFixed(1)})`, 'action');
+                    executorStuckCounter = 0;
                 }
 
                 if (executor.currentTarget) {
                     const target = executor.currentTarget;
                     const dist = Math.sqrt((executor.x - target.x) ** 2 + (executor.y - target.y) ** 2);
 
-                    // Check if close enough to collect (works in both modes)
                     if (dist < COLLECTION_RADIUS) {
                         if (!target.collected) {
                             target.collected = true;
@@ -700,19 +935,32 @@
                             addLog(`⬢ ${executor.name}: ✓ COLLECTED TARGET #${target.id} - VALUE: ${value.toFixed(1)} (${executor.collected}/15)`, 'success');
                         }
                         executor.currentTarget = null;
+                        executorStuckCounter = 0;
                     } else {
-                        // Auto-navigate only in autonomous mode
                         if (!manualMode) {
-                            const dx = target.x - executor.x;
-                            const dy = target.y - executor.y;
-                            const moveSpeed = Math.min(5, dist);
-                            const newX = executor.x + (dx / dist) * moveSpeed;
-                            const newY = executor.y + (dy / dist) * moveSpeed;
-
-                            if (isObstacleFree(newX, newY)) {
-                                executor.x = newX;
-                                executor.y = newY;
+                            // Check if stuck
+                            const distMoved = Math.sqrt(
+                                (executor.x - lastExecutorPosition.x) ** 2 + 
+                                (executor.y - lastExecutorPosition.y) ** 2
+                            );
+                            
+                            if (distMoved < 0.5) {
+                                executorStuckCounter++;
+                                if (executorStuckCounter > 8) {
+                                    // Skip this target and move to next
+                                    addLog(`⬢ ${executor.name}: Target #${executor.currentTarget.id} unreachable, moving to next target`, 'warning');
+                                    executor.currentTarget = null;
+                                    executorStuckCounter = 0;
+                                }
+                            } else {
+                                executorStuckCounter = 0;
                             }
+                            
+                            lastExecutorPosition = { x: executor.x, y: executor.y };
+                            
+                            // Navigate with obstacle avoidance
+                            const moveSpeed = Math.min(5, dist);
+                            navigateToTarget(executor, target.x, target.y, moveSpeed);
                         }
                     }
                 }
@@ -733,6 +981,9 @@
             if (collected >= 10) {
                 stopMission();
                 addLog('⬢⬢⬢ MISSION OBJECTIVES ACHIEVED - ALL SYSTEMS NOMINAL ⬢⬢⬢', 'success');
+                if (aiMode) {
+                    addLog('⬢⬢⬢ AI ANALYST PERFORMANCE: EXCELLENT ⬢⬢⬢', 'ai');
+                }
             }
         }
 
@@ -743,7 +994,6 @@
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Grid
             ctx.strokeStyle = '#001100';
             ctx.lineWidth = 1;
             for (let i = 0; i <= 10; i++) {
@@ -759,7 +1009,6 @@
 
             const { targets, obstacles, scout, executor } = mission;
 
-            // Obstacles
             ctx.fillStyle = '#663366';
             obstacles.forEach(obs => {
                 ctx.beginPath();
@@ -769,7 +1018,6 @@
                 ctx.stroke();
             });
 
-            // Targets
             targets.forEach(target => {
                 ctx.save();
                 ctx.translate(target.x * scale, target.y * scale);
@@ -784,7 +1032,7 @@
                     ctx.fill();
                     ctx.stroke();
                 } else if (target.discovered) {
-                    ctx.fillStyle = '#ff6600';
+                    ctx.fillStyle = aiMode ? '#ff00ff' : '#ff6600';
                     ctx.strokeStyle = '#ffffff';
                     ctx.beginPath();
                     ctx.moveTo(0, -6);
@@ -803,8 +1051,7 @@
                 ctx.restore();
             });
 
-            // Scout sensor range
-            ctx.strokeStyle = manualMode ? '#ffaa0033' : '#00ffff33';
+            ctx.strokeStyle = manualMode ? '#ffaa0033' : (aiMode ? '#ff00ff33' : '#00ffff33');
             ctx.lineWidth = 1;
             ctx.setLineDash([3, 3]);
             ctx.beginPath();
@@ -812,9 +1059,8 @@
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // Executor collection range (visual indicator)
             if (executor.currentTarget) {
-                ctx.strokeStyle = '#ffff0033';
+                ctx.strokeStyle = aiMode ? '#ff00ff33' : '#ffff0033';
                 ctx.lineWidth = 1;
                 ctx.setLineDash([2, 2]);
                 ctx.beginPath();
@@ -822,8 +1068,7 @@
                 ctx.stroke();
                 ctx.setLineDash([]);
                 
-                // Draw line to target
-                ctx.strokeStyle = '#ffff0044';
+                ctx.strokeStyle = aiMode ? '#ff00ff44' : '#ffff0044';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(executor.x * scale, executor.y * scale);
@@ -831,10 +1076,10 @@
                 ctx.stroke();
             }
 
-            // Agents
+            const agentColor = manualMode ? '#ffaa00' : (aiMode ? '#ff00ff' : '#00ffff');
             [
-                { ...scout, color: manualMode ? '#ffaa00' : '#00ffff' },
-                { ...executor, color: manualMode ? '#ffaa00' : '#ffff00' }
+                { ...scout, color: agentColor },
+                { ...executor, color: aiMode ? '#ff00ff' : '#ffff00' }
             ].forEach(agent => {
                 ctx.save();
                 ctx.translate(agent.x * scale, agent.y * scale);
@@ -867,6 +1112,10 @@
             pauseBtn.style.display = 'inline-block';
             pauseBtn.classList.add('active');
             addLog('⬢⬢⬢ MISSION INITIATED - AUTONOMOUS SYSTEMS ACTIVE ⬢⬢⬢', 'success');
+            if (aiMode) {
+                addLog('⬢⬢⬢ AI ANALYST STANDING BY ⬢⬢⬢', 'ai');
+            }
+            updateModeIndicator();
             animationInterval = setInterval(runCycle, 300);
         }
 
@@ -883,6 +1132,7 @@
             cycle = 0;
             manualMode = false;
             scoutStuckCounter = 0;
+            executorStuckCounter = 0;
             updateModeIndicator();
             consoleEl.innerHTML = '';
             document.getElementById('cycleCount').textContent = '0';
@@ -892,6 +1142,9 @@
             initMission();
             drawMission();
             addLog('⬢ SYSTEM RESET - STANDING BY FOR MISSION START ⬢', 'info');
+            if (aiMode) {
+                addLog('⬢ AI ANALYST READY ⬢', 'ai');
+            }
         }
 
         startBtn.addEventListener('click', startMission);
@@ -905,8 +1158,8 @@
 
         initMission();
         drawMission();
-        addLog('⬢ LUNAR MISSION CONTROL SYSTEM v2.7 - ONLINE ⬢', 'info');
-        addLog('⬢ AWAITING MISSION INITIATION COMMAND ⬢', 'info');
+        addLog('⬢ LUNAR MISSION CONTROL SYSTEM v3.0 - AI-READY ⬢', 'info');
+        addLog('⬢ Enter Groq API key above to enable AI Analyst ⬢', 'info');
     </script>
 </body>
 </html>
